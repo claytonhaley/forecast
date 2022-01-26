@@ -1,5 +1,4 @@
 pandas_datareader
-math
 streamlit
 pandas
 matplotlib
