@@ -1,12 +1,8 @@
 from pandas_datareader import data as pdr
-import datetime
 import math
-from pylab import rcParams
-import plotly.express as px
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 import yfinance as yf
 import numpy as np
 from sklearn.preprocessing import StandardScaler
