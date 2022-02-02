@@ -1,27 +1,45 @@
-from pandas_datareader import data as pdr
-import math
-import streamlit as st
+import os
+import shutil
+from datetime import datetime
 import pandas as pd
+import streamlit as st
 import matplotlib.pyplot as plt
-import yfinance as yf
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error
-from keras_tuner.tuners import RandomSearch
-from keras.callbacks import EarlyStopping
-from keras.models import Model, Sequential
-from keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.optimizers import SGD
 from model import ModelIntegration
 
 
+def _show_predictions(train_preds, future_preds):
+    """
+
+    """
+    
+    start_date = train_preds.iloc[[-1]].index[0]
+    start_price = train_preds.iloc[[-1]]['close']
+    
+    start_row = pd.DataFrame(data={'close': start_price}, index=[start_date])
+    future_preds = future_preds.append(start_row)
+    future_preds = future_preds.reset_index()
+   
+    for int_index, row in future_preds.iterrows():
+        if (pd.to_datetime(row['index']) == start_date) and (float(row['close']) == start_price):
+            continue
+        
+        if row['close'] < float(future_preds.iloc[[int_index-1]]['close']):
+            color = 'red'
+        else:
+            color = 'green'
+    
+    future_preds = future_preds.iloc[:,1:]
+
+    return 'color: %s' % color
+
+        
 # -------- MAIN FUNCTION --------
 def main():
     st.set_page_config(page_title="Stock Market Prediction",
                     page_icon=":chart_with_upwards_trend:",
                     layout="wide")
 
-    st.title(":chart_with_upwards_trend: Stock Market Prediction with LSTMs")
+    st.title(":chart_with_upwards_trend: Stock Market Prediction with LSTMs and CNNs")
     st.markdown("##")
     left_column, right_column = st.columns((1, 2))
 
@@ -38,7 +56,8 @@ def main():
         start_date = str(st.sidebar.date_input("Chose a start date for data collection"))
         end_date = str(st.sidebar.date_input("Chose an end date for data collection"))
 
-        lookback_days = st.sidebar.slider("Past days considered for training", min_value=1, max_value=1000)
+        lookback_days = st.sidebar.slider("Past days considered for training", min_value=1, max_value=730)
+
         lookahead_days = st.sidebar.slider("Days ahead to predict", min_value=1, max_value=100)
 
         epochs = st.sidebar.slider("Epochs", min_value=1, max_value=100)
@@ -53,7 +72,7 @@ def main():
         if submit:
             # try:
             # ---- DATA PREPROCESSING ----
-            integrate = ModelIntegration(ticker_name, start_date, end_date, lookback_days, lookahead_days, epochs, tuner)
+            integrate = ModelIntegration(ticker_name, start_date, end_date, lookback_days, lookahead_days, epochs)
 
             integrate._preprocess()
 
@@ -64,6 +83,10 @@ def main():
                 if tuner == False:
                     model, history = integrate._build_default_model()
                 else:
+                    if os.path.isdir('untitled_project'): shutil.rmtree('untitled_project')
+
+                    st.warning("This may take some time.")
+
                     model, history = integrate._run_tuned_model()
 
             
@@ -76,8 +99,8 @@ def main():
 
             # Generating Predictions
             with st.spinner('Generating Predictions...'):
-                rmse, r2, _, _ = integrate._generate_predictions(model)
-
+                rmse, r2, future_predictions, train_predictions = integrate._generate_predictions(model)
+                
                 with right_column:
                     integrate._pred_plot()
 
@@ -87,7 +110,8 @@ def main():
             with left_column:
                 st.warning(f"Stopped at {len(history.history['loss'])} epochs (loss failed to improve)")
                 st.info(f"RMSE: {rmse}")
-                st.info("R-Squared:" + "{:.2%}".format(r2))
+                st.info("R-Squared: " + "{:.2%}".format(r2))
+                st.dataframe(future_predictions.apply(_show_predictions(future_predictions, train_predictions)))
                 
             # except:
             #     st.error("Please choose the appropriate parameters")

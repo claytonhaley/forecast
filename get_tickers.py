@@ -1,5 +1,4 @@
 import pandas as pd
-import csv
 from yahoo_fin import stock_info as si
 
 # Get ticker names

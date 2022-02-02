@@ -2,13 +2,11 @@ import math
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import yfinance as yf
 from yahoofinancials import YahooFinancials
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, r2_score
 from keras_tuner.tuners import RandomSearch
-from keras_tuner.engine.hyperparameters import HyperParameters
 from keras_tuner import HyperModel
 from keras.callbacks import EarlyStopping
 from keras.models import Sequential
@@ -19,7 +17,7 @@ from tensorflow.keras.optimizers import Adam
 class ModelIntegration(HyperModel):
 
     def __init__(self, ticker_name, start_date, end_date, 
-                    lookback_days, lookahead_days, epochs, tuner):
+                    lookback_days, lookahead_days, epochs):
         """
 
         """
@@ -29,7 +27,6 @@ class ModelIntegration(HyperModel):
         self.lookback_days = lookback_days
         self.lookahead_days = lookahead_days
         self.epochs = epochs
-        self.tuner = tuner
 
     # ---- PREPROCESS ----
     def _preprocess(self):
@@ -59,8 +56,8 @@ class ModelIntegration(HyperModel):
 
         self.dates = full_data['formatted_date']
         self.df = full_data[['high', 'low', 'open', 'volume', 'adjclose', 'close']]
-
-        return self.df, self.dates, self.scaler
+        
+        return self.df, self.dates
 
 
     # ---- CREATE TRAINING DATASET ----
@@ -77,11 +74,11 @@ class ModelIntegration(HyperModel):
                         y_train      (np.ndarray): target values 
         """
         dataset = self.df.to_numpy()
-        X_scaler = MinMaxScaler(feature_range=(-1,1))
-        X_scaled = X_scaler.fit_transform(dataset[:,0:dataset.shape[1]-1])
-
-        y_scaler = MinMaxScaler(feature_range=(-1,1))
-        y_scaled = y_scaler.fit_transform(dataset[:,-1].reshape(-1, 1))
+        self.X_scaler = MinMaxScaler(feature_range=(-1,1))
+        X_scaled = self.X_scaler.fit_transform(dataset[:,0:dataset.shape[1]-1])
+        
+        self.y_scaler = MinMaxScaler(feature_range=(-1,1))
+        y_scaled = self.y_scaler.fit_transform(dataset[:,-1].reshape(-1, 1))
 
         dataset = np.hstack((X_scaled, y_scaled))
 
@@ -90,7 +87,7 @@ class ModelIntegration(HyperModel):
                 X_train.append(dataset[i - self.lookback_days:i, 0:dataset.shape[1] - 1])
                 y_train.append(dataset[i + self.lookahead_days - 1:i + self.lookahead_days, 5])
 
-        X_train, y_train = np.array(X_train), np.array(y_train)
+        self.X_train, self.y_train = np.array(X_train), np.array(y_train)
 
         return self.X_train, self.y_train, self.X_scaler, self.y_scaler
 
@@ -122,8 +119,7 @@ class ModelIntegration(HyperModel):
         
         early_stop = EarlyStopping(monitor='val_loss', patience=20, verbose=0)
 
-        history = model.fit(self.X_train, self.y_train, epochs=self.epochs, callbacks=[early_stop],
-                                batch_size=64, validation_split=0.1, verbose=0)
+        history = model.fit(self.X_train, self.y_train, epochs=self.epochs, callbacks=[early_stop], validation_split=0.1, verbose=0)
 
         return model, history
 
@@ -132,16 +128,19 @@ class ModelIntegration(HyperModel):
         """
 
         """
+        
         model = Sequential()
         model.add(Conv1D(hp.Int(name='input_units_1', min_value=16, max_value=128, step=16), 
-                        hp.Int(name='input_units_2', min_value=16, max_value=128, step=16), activation='relu', input_shape=(self.lookback_days, self.X_train.shape[2])))
+                        hp.Int(name='input_units_2', min_value=16, max_value=self.lookback_days-9, step=16), activation='relu', input_shape=(self.lookback_days, self.X_train.shape[2])))
         model.add(MaxPooling1D(1,1))
         model.add((LSTM(hp.Int(name='lstm_1', min_value=16, max_value=128, step=16), return_sequences=True)))
         model.add((LSTM(hp.Int(name='lstm_2', min_value=16, max_value=128, step=16))))
         model.add(Dense(hp.Int(name='dense_1', min_value=16, max_value=128, step=16)))
         model.add(Dense(1))
         
-        model.compile(optimizer = Adam(learning_rate=hp.Float(name='learning_rate', min_value=0.001, max_value=0.1, step=0.001)), loss='mean_squared_error')
+        model.compile(optimizer = Adam(learning_rate=hp.Float(name='learning_rate', min_value=0.001, max_value=0.1, step=0.001)), 
+                        loss='mean_squared_error', 
+                        run_eagerly=True)
         
 
         return model
@@ -187,14 +186,16 @@ class ModelIntegration(HyperModel):
                         PREDICTIONS_FUTURE         (pd.DataFrame): future predictions
                         PREDICTION_TRAIN           (pd.DataFrame): training predictions
         """                    
-
         all_predictions_train = model.predict(self.X_train)
         all_y_train_pred_actual = self.y_scaler.inverse_transform(all_predictions_train)
 
-        predictions_train = model.predict(self.X_train[180:])
+
+        predictions_train = model.predict(self.X_train[self.lookback_days:])
+
         y_pred_train = self.y_scaler.inverse_transform(predictions_train)
 
-        predictions_future = model.predict(self.X_train[-45:])
+
+        predictions_future = model.predict(self.X_train[-self.lookahead_days:])
         y_pred_future = self.y_scaler.inverse_transform(predictions_future)
 
         # Dates for future predictions
@@ -203,7 +204,7 @@ class ModelIntegration(HyperModel):
         # Final data frames for plotting
         self.PREDICTIONS_FUTURE = pd.DataFrame(y_pred_future, columns=['close']).set_index(pd.Series(datelist_future))
         self.PREDICTION_TRAIN = pd.DataFrame(y_pred_train, columns=['close']).set_index(pd.Series(self.dates[2 * self.lookback_days + self.lookahead_days - 1:]))
-        self.PREDICTION_TRAIN.index = pd.DatetimeIndex(PREDICTION_TRAIN.index)
+        self.PREDICTION_TRAIN.index = pd.DatetimeIndex(self.PREDICTION_TRAIN.index)
 
         # Calculate RMSE and R^2
         rmse = math.sqrt(mean_squared_error(self.y_scaler.inverse_transform(self.y_train), all_y_train_pred_actual))
@@ -227,7 +228,7 @@ class ModelIntegration(HyperModel):
         """
 
         # Plot parameters
-        START_DATE_FOR_PLOTTING = '2019-02-15'
+        START_DATE_FOR_PLOTTING = self.start_date
 
         dates = list(self.dates)
         self.df['Date'] = dates
@@ -246,4 +247,5 @@ class ModelIntegration(HyperModel):
         plt.xlabel('Timeline', family='Arial', fontsize=14)
         plt.ylabel('Stock Price Value', family='Arial', fontsize=14)
         plt.xticks(rotation=45, fontsize=8)
-        st.show(fig)
+        st.pyplot(fig)
+        
