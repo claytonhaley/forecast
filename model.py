@@ -12,6 +12,7 @@ from keras.callbacks import EarlyStopping
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Conv1D, MaxPooling1D
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import l2
 
 
 class ModelIntegration(HyperModel):
@@ -108,14 +109,12 @@ class ModelIntegration(HyperModel):
                         history:        (history obj): model history/details
         """
         model = Sequential()
-        model.add(Conv1D(32, self.lookback_days-9, activation='relu', input_shape=(self.lookback_days, self.X_train.shape[2])))
-        model.add(MaxPooling1D(1,1))
-        model.add((LSTM(64, return_sequences=True)))
-        model.add((LSTM(32)))
-        model.add(Dense(16))
-        model.add(Dense(1))
+        model.add((LSTM(16, return_sequences=True, kernel_regularizer=l2(0.01), input_shape=(self.lookback_days, self.X_train.shape[2]), dropout=0.2)))
+        model.add((LSTM(16, return_sequences=False)))
+        model.add(Dense(1, activation='linear'))
+        model.build()
 
-        model.compile(optimizer = Adam(learning_rate=0.01), loss='mean_squared_error')
+        model.compile(optimizer = Adam(learning_rate=0.01, clipvalue=0.5), loss='mean_squared_error')
         
         early_stop = EarlyStopping(monitor='val_loss', patience=20, verbose=0)
 
@@ -130,12 +129,11 @@ class ModelIntegration(HyperModel):
         """
         
         model = Sequential()
-        model.add(Conv1D(hp.Int(name='input_units_1', min_value=16, max_value=128, step=16), 
-                        hp.Int(name='input_units_2', min_value=16, max_value=self.lookback_days-9, step=16), activation='relu', input_shape=(self.lookback_days, self.X_train.shape[2])))
-        model.add(MaxPooling1D(1,1))
-        model.add((LSTM(hp.Int(name='lstm_1', min_value=16, max_value=128, step=16), return_sequences=True)))
-        model.add((LSTM(hp.Int(name='lstm_2', min_value=16, max_value=128, step=16))))
-        model.add(Dense(hp.Int(name='dense_1', min_value=16, max_value=128, step=16)))
+        model.add((LSTM(hp.Int(name='lstm_1', min_value=16, max_value=128, step=16), return_sequences=True, 
+                                    kernel_regularizer=l2(hp.Float(name='l2_regularizer', min_value=0.001, max_value=0.1, step=0.01)), 
+                                    input_shape=(self.lookback_days, self.X_train.shape[2]), 
+                                    dropout=hp.Float(name='dropout', min_value=0.1, max_value=0.9, step=0.1))))
+        model.add((LSTM(hp.Int(name='lstm_2', min_value=16, max_value=128, step=16), return_sequences=False)))
         model.add(Dense(1))
         
         model.compile(optimizer = Adam(learning_rate=hp.Float(name='learning_rate', min_value=0.001, max_value=0.1, step=0.001)), 
@@ -163,7 +161,7 @@ class ModelIntegration(HyperModel):
         best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
 
         model = tuner.hypermodel.build(best_hps)
-        history = model.fit(self.X_train, self.y_train, epochs=100, validation_split=0.1, callbacks=[early_stop])
+        history = model.fit(self.X_train, self.y_train, epochs=30, validation_split=0.1, callbacks=[early_stop])
 
         return model, history
 
