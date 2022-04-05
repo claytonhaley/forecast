@@ -13,6 +13,7 @@ from keras.models import Sequential
 from keras.layers import LSTM, Dense, Conv1D, MaxPooling1D
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
+import sys
 
 
 class ModelIntegration(HyperModel):
@@ -75,15 +76,22 @@ class ModelIntegration(HyperModel):
                         y_train      (np.ndarray): target values 
         """
         dataset = self.df.to_numpy()
-        self.X_scaler = MinMaxScaler(feature_range=(-1,1))
+        
+        self.X_scaler = MinMaxScaler(feature_range=(0,1))
         X_scaled = self.X_scaler.fit_transform(dataset[:,0:dataset.shape[1]-1])
         
-        self.y_scaler = MinMaxScaler(feature_range=(-1,1))
+        self.y_scaler = MinMaxScaler(feature_range=(0,1))
         y_scaled = self.y_scaler.fit_transform(dataset[:,-1].reshape(-1, 1))
-
+        
         dataset = np.hstack((X_scaled, y_scaled))
-
+        
         X_train, y_train = [], []
+
+        try:
+                assert(self.lookback_days < (len(dataset) - self.lookahead_days + 1)), st.error("Please choose a smaller value for Past Days")
+        except AssertionError:
+                pass
+
         for i in range(self.lookback_days, len(dataset) - self.lookahead_days + 1):
                 X_train.append(dataset[i - self.lookback_days:i, 0:dataset.shape[1] - 1])
                 y_train.append(dataset[i + self.lookahead_days - 1:i + self.lookahead_days, 5])
@@ -109,12 +117,12 @@ class ModelIntegration(HyperModel):
                         history:        (history obj): model history/details
         """
         model = Sequential()
-        model.add((LSTM(16, return_sequences=True, kernel_regularizer=l2(0.01), input_shape=(self.lookback_days, self.X_train.shape[2]), dropout=0.2)))
-        model.add((LSTM(16, return_sequences=False)))
-        model.add(Dense(1, activation='linear'))
+        model.add((LSTM(units=16, return_sequences=True, kernel_regularizer=l2(0.01), input_shape=(self.X_train.shape[1], self.X_train.shape[2]), dropout=0.2)))
+        model.add((LSTM(units=16, return_sequences=False))) 
+        model.add(Dense(1))
         model.build()
-
-        model.compile(optimizer = Adam(learning_rate=0.01, clipvalue=0.5), loss='mean_squared_error')
+        
+        model.compile(optimizer = Adam(learning_rate=0.01, clipvalue=0.5), loss='mean_squared_error', run_eagerly=True)
         
         early_stop = EarlyStopping(monitor='val_loss', patience=20, verbose=0)
 
@@ -131,12 +139,12 @@ class ModelIntegration(HyperModel):
         model = Sequential()
         model.add((LSTM(hp.Int(name='lstm_1', min_value=16, max_value=128, step=16), return_sequences=True, 
                                     kernel_regularizer=l2(hp.Float(name='l2_regularizer', min_value=0.001, max_value=0.1, step=0.01)), 
-                                    input_shape=(self.lookback_days, self.X_train.shape[2]), 
+                                    input_shape=(self.X_train.shape[1], self.X_train.shape[2]), 
                                     dropout=hp.Float(name='dropout', min_value=0.1, max_value=0.9, step=0.1))))
         model.add((LSTM(hp.Int(name='lstm_2', min_value=16, max_value=128, step=16), return_sequences=False)))
         model.add(Dense(1))
         
-        model.compile(optimizer = Adam(learning_rate=hp.Float(name='learning_rate', min_value=0.001, max_value=0.1, step=0.001)), 
+        model.compile(optimizer = Adam(learning_rate=hp.Float(name='learning_rate', min_value=0.001, max_value=0.1, step=0.001)),
                         loss='mean_squared_error', 
                         run_eagerly=True)
         
@@ -161,7 +169,7 @@ class ModelIntegration(HyperModel):
         best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
 
         model = tuner.hypermodel.build(best_hps)
-        history = model.fit(self.X_train, self.y_train, epochs=30, validation_split=0.1, callbacks=[early_stop])
+        history = model.fit(self.X_train, self.y_train,epochs=30, validation_split=0.1, callbacks=[early_stop])
 
         return model, history
 
@@ -183,22 +191,19 @@ class ModelIntegration(HyperModel):
                         mse                        (float): root mean squared error
                         PREDICTIONS_FUTURE         (pd.DataFrame): future predictions
                         PREDICTION_TRAIN           (pd.DataFrame): training predictions
-        """                    
+        """                   
         all_predictions_train = model.predict(self.X_train)
         all_y_train_pred_actual = self.y_scaler.inverse_transform(all_predictions_train)
-
-
+        
         predictions_train = model.predict(self.X_train[self.lookback_days:])
-
         y_pred_train = self.y_scaler.inverse_transform(predictions_train)
-
 
         predictions_future = model.predict(self.X_train[-self.lookahead_days:])
         y_pred_future = self.y_scaler.inverse_transform(predictions_future)
 
         # Dates for future predictions
         datelist_future = pd.date_range(list(self.dates)[-1], periods=self.lookahead_days, freq='1d').tolist()
-
+        
         # Final data frames for plotting
         self.PREDICTIONS_FUTURE = pd.DataFrame(y_pred_future, columns=['close']).set_index(pd.Series(datelist_future))
         self.PREDICTION_TRAIN = pd.DataFrame(y_pred_train, columns=['close']).set_index(pd.Series(self.dates[2 * self.lookback_days + self.lookahead_days - 1:]))

@@ -1,3 +1,4 @@
+from ast import Str
 import os
 import shutil
 from datetime import datetime
@@ -5,6 +6,7 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 from model import ModelIntegration
+import numpy as np
 
 
         
@@ -28,10 +30,10 @@ def main():
         # Param options
         ticker_name = st.sidebar.selectbox("Select Ticker", ticker_options)
 
-        start_date = str(st.sidebar.date_input("Chose a start date for data collection"))
-        end_date = str(st.sidebar.date_input("Chose an end date for data collection"))
+        start_date = st.sidebar.date_input("Chose a start date for data collection")
+        end_date = st.sidebar.date_input("Chose an end date for data collection")
 
-        lookback_days = st.sidebar.slider("Past days considered for training", min_value=1, max_value=730)
+        lookback_days = st.sidebar.slider("Past days considered for training", min_value=1, max_value=int(np.busday_count(start_date, end_date)))
 
         lookahead_days = st.sidebar.slider("Days ahead to predict", min_value=1, max_value=100)
 
@@ -46,8 +48,8 @@ def main():
 
         if submit:
             try:
-            # ---- DATA PREPROCESSING ----
-                integrate = ModelIntegration(ticker_name, start_date, end_date, lookback_days, lookahead_days, epochs)
+                # ---- DATA PREPROCESSING ----
+                integrate = ModelIntegration(ticker_name, str(start_date), str(end_date), lookback_days, lookahead_days, epochs)
 
                 integrate._preprocess()
 
@@ -89,8 +91,8 @@ def main():
 
                     st.dataframe(future_predictions)
             
-            except:
-                st.error("Please choose the appropriate parameters")
+            except ValueError:
+                st.error("Please lower the amount of lookback days.")
 
 
 if __name__ == "__main__":
